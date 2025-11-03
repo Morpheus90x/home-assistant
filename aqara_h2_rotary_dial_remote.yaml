@@ -1,97 +1,184 @@
-# This blueprint allows you to map actions to the different controls on an Aqara H2 Rotary Dial
-#
-# This automation is built for a device in EVENT mode rather than COMMAND mode. As there is some cross-over between the two modes, it is NOT recommended to use automations for both modes at the same time.
-
 blueprint:
-  name: Aqara H2 Rotary Dial - Remote (Event Mode)
-
-  source_url: https://raw.githubusercontent.com/Morpheus90x/home-assistant/refs/heads/main/aqara_h2_rotary_dial_remote.yaml
-
-  description: >-
-    This automation allows using an Aqara H2 Rotary Dial (ZigBee) to trigger actions.
-
+  name: Aqara Dimmer Switch H2 EU (Zigbee2MQTT)
+  description: |
+    Control devices with the Aqara Dimmer Switch H2 EU via Zigbee2MQTT.
+    
+    Supports:
+    - Single click
+    - Double click
+    - Rotation (left/right, slow/fast)
+    - Hold + Rotation
+    
+    The switch must be in "decoupled" operation mode for full functionality.
   domain: automation
-
   input:
-    dial:
-      name: Aqara H1 Rotary Dial
-      description: Select the rotary dial you wish to use
+    mqtt_device:
+      name: MQTT Device Topic
+      description: The Zigbee2MQTT topic for your Aqara H2 switch (e.g., "zigbee2mqtt/Aqara Dimmer Switch H2 EU")
       selector:
-        device:
-          integration: zha
-          manufacturer: LUMI
-          model: lumi.switch.agl011
-    single:
-      name: Single Press
-      description: The action to perform on a single press of the dial button
-      selector:
-        action:
+        text:
+    
+    # Click Actions
+    single_click_action:
+      name: Single Click
+      description: Action to run on single click
       default: []
-    double:
-      name: Double Press
-      description: The action to perform on a double press of the dial button
       selector:
-        action:
+        action: {}
+    
+    double_click_action:
+      name: Double Click
+      description: Action to run on double click
       default: []
-    long:
-      name: Long Press
-      description: The action to perform on a long press of the dial button
       selector:
-        action:
+        action: {}
+    
+    # Rotation Actions (without button press)
+    rotate_right_action:
+      name: Rotate Right
+      description: Action to run when rotating right (clockwise)
       default: []
-    left:
-      name: Left Turn
-      description: The action to perform on rotating the dial to the left
       selector:
-        action:
+        action: {}
+    
+    rotate_left_action:
+      name: Rotate Left
+      description: Action to run when rotating left (counter-clockwise)
       default: []
-    right:
-      name: Right Turn
-      description: The action to perform on rotating the dial to the right
       selector:
-        action:
+        action: {}
+    
+    # Hold + Rotation Actions
+    hold_rotate_right_action:
+      name: Hold + Rotate Right
+      description: Action to run when holding button and rotating right
       default: []
+      selector:
+        action: {}
+    
+    hold_rotate_left_action:
+      name: Hold + Rotate Left
+      description: Action to run when holding button and rotating left
+      default: []
+      selector:
+        action: {}
+    
+    # Target device for brightness control (optional)
+    target_light:
+      name: Target Light (Optional)
+      description: Light entity to control with rotation. Leave empty if not using rotation for brightness.
+      default: ""
+      selector:
+        entity:
+          domain: light
+    
+    brightness_step:
+      name: Brightness Step
+      description: Brightness change per rotation event (1-100)
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 100
+          step: 1
 
-mode: restart
+mode: single
 max_exceeded: silent
 
+variables:
+  mqtt_topic: !input mqtt_device
+  target_light: !input target_light
+  brightness_step: !input brightness_step
+
 trigger:
-  - platform: event
-    event_type: zha_event
-    event_data:
-      device_id: !input dial
+  - platform: mqtt
+    topic: "{{ mqtt_topic }}"
+    encoding: utf-8
+
+condition: []
 
 action:
+  - variables:
+      action_type: "{{ trigger.payload_json.action }}"
+      rotation_angle: "{{ trigger.payload_json.action_rotation_angle | default(0) | float }}"
+      rotation_percent: "{{ trigger.payload_json.action_rotation_percent | default(0) | float }}"
+      button_state: "{{ trigger.payload_json.action_rotation_button_state | default('released') }}"
+  
   - choose:
-      # Single press on the button
+      # Single Click
       - conditions:
           - condition: template
-            value_template: '{{ trigger.event.data.command == "1_single" }}'
-        sequence: !input single
-
-      # Double press on the button
+            value_template: "{{ action_type == 'single' }}"
+        sequence: !input single_click_action
+      
+      # Double Click
       - conditions:
           - condition: template
-            value_template: '{{ trigger.event.data.command == "1_double" }}'
-        sequence: !input double
-
-      # Long press on the button
+            value_template: "{{ action_type == 'double' }}"
+        sequence: !input double_click_action
+      
+      # Rotate Right (without hold)
       - conditions:
           - condition: template
-            value_template: '{{ trigger.event.data.command == "1_hold" }}'
-        sequence: !input long
-
-      # Rotate dial to the left
+            value_template: "{{ action_type == 'rotation' }}"
+          - condition: template
+            value_template: "{{ rotation_angle > 0 }}"
+          - condition: template
+            value_template: "{{ button_state == 'released' }}"
+        sequence:
+          - choose:
+              # If target light is specified, increase brightness
+              - conditions:
+                  - condition: template
+                    value_template: "{{ target_light != '' }}"
+                sequence:
+                  - service: light.turn_on
+                    target:
+                      entity_id: "{{ target_light }}"
+                    data:
+                      brightness_step_pct: "{{ brightness_step }}"
+            # Custom action
+            default: !input rotate_right_action
+      
+      # Rotate Left (without hold)
       - conditions:
           - condition: template
-            value_template: '{{ trigger.event.data.command == "stop_rotation" and trigger.event.data.args.rotation_direction == -1 }}'
-        sequence: !input left
-
-      # Rotate dial to the right
+            value_template: "{{ action_type == 'rotation' }}"
+          - condition: template
+            value_template: "{{ rotation_angle < 0 }}"
+          - condition: template
+            value_template: "{{ button_state == 'released' }}"
+        sequence:
+          - choose:
+              # If target light is specified, decrease brightness
+              - conditions:
+                  - condition: template
+                    value_template: "{{ target_light != '' }}"
+                sequence:
+                  - service: light.turn_on
+                    target:
+                      entity_id: "{{ target_light }}"
+                    data:
+                      brightness_step_pct: "{{ -brightness_step }}"
+            # Custom action
+            default: !input rotate_left_action
+      
+      # Hold + Rotate Right
       - conditions:
           - condition: template
-            value_template: '{{ trigger.event.data.command == "stop_rotation" and trigger.event.data.args.rotation_direction == 1 }}'
-        sequence: !input right
-
-    # Any other event will cancel the repeat loops.
-    default: []
+            value_template: "{{ action_type == 'rotation' }}"
+          - condition: template
+            value_template: "{{ rotation_angle > 0 }}"
+          - condition: template
+            value_template: "{{ button_state == 'pressed' }}"
+        sequence: !input hold_rotate_right_action
+      
+      # Hold + Rotate Left
+      - conditions:
+          - condition: template
+            value_template: "{{ action_type == 'rotation' }}"
+          - condition: template
+            value_template: "{{ rotation_angle < 0 }}"
+          - condition: template
+            value_template: "{{ button_state == 'pressed' }}"
+        sequence: !input hold_rotate_left_action
