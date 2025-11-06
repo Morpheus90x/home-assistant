@@ -1,6 +1,6 @@
 blueprint:
-  name: LLM Script for Music Assistant voice requests
-  source_url: https://github.com/music-assistant/voice-support/blob/main/llm-script-blueprint/llm_voice_script.yaml
+  name: LLM Script for Music Assistant voice requests - Custom V1
+  source_url: https://raw.githubusercontent.com/Morpheus90x/home-assistant/refs/heads/main/llm_voice_script_custom_v1.yaml
   description: '![Image](https://github.com/music-assistant/voice-support/blob/main/assets/music-assistant.png?raw=true)
 
     # Creates a script which will allow voice requests for Music Assistant
