@@ -1,0 +1,133 @@
+blueprint:
+  name: Aqara H2 Dimmer Switch (KD-R01D) - Single-Entity CCT Control
+  description: >
+    Optimized blueprint for the Aqara H2 EU Dimmer (KD-R01D) running via Zigbee2MQTT.
+    
+    Requirements:
+    1. Set the H2's 'operation_mode' to 'decoupled' in Z2M so it doesn't fire the local relay.
+    2. Select the main 'Action' sensor of the device.
+  domain: automation
+  input:
+    action_entity:
+      name: Aqara H2 Action Sensor
+      description: The main action sensor entity (e.g., sensor.kitchen_dimmer_action).
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+          multiple: false
+    target_light:
+      name: Target Light
+      description: The CCT Light entity you want to control.
+      selector:
+        entity:
+          filter:
+            - domain: light
+          multiple: false
+    brightness_step_scale:
+      name: Brightness Sensitivity
+      description: Multiplier for brightness changes. Higher values change brightness faster.
+      default: 1.5
+      selector:
+        number:
+          min: 0.5
+          max: 5.0
+          step: 0.1
+    colortemp_step_scale:
+      name: Color Temperature Sensitivity
+      description: Kelvin adjustment scale factor when rotating while pressed.
+      default: 60
+      selector:
+        number:
+          min: 10
+          max: 200
+          step: 10
+    colortemp_default:
+      name: Default Color Temperature
+      description: Target Kelvin applied on a double-click event.
+      default: 5400
+      selector:
+        number:
+          min: 2000
+          max: 9000
+          unit_of_measurement: "K"
+
+variables:
+  target_light_entity: !input target_light
+  b_scale: !input brightness_step_scale
+  ct_scale: !input colortemp_step_scale
+
+trigger:
+  - platform: state
+    entity_id: !input action_entity
+
+condition:
+  - condition: template
+    value_template: "{{ trigger.to_state.state | string != '' }}"
+
+action:
+  - choose:
+      # 1. Single Click -> Toggle Light
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.to_state.state == 'single' }}"
+        sequence:
+          - service: light.toggle
+            target:
+              entity_id: "{{ target_light_entity }}"
+
+      # 2. Double Click -> Reset to Default Kelvin
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.to_state.state == 'double' }}"
+        sequence:
+          - service: light.turn_on
+            data:
+              kelvin: !input colortemp_default
+            target:
+              entity_id: "{{ target_light_entity }}"
+
+      # 3. Active Rotation
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.to_state.state == 'rotation' }}"
+        sequence:
+          - choose:
+              # Case A: Knob rotated normally (Released state) -> Adjust Brightness
+              - conditions:
+                  - condition: template
+                    value_template: "{{ trigger.to_state.attributes.action_rotation_button_state == 'released' }}"
+                sequence:
+                  - service: light.turn_on
+                    data:
+                      brightness_pct: >-
+                        {% set speed = trigger.to_state.attributes.action_rotation_percent_speed | float(0) %}
+                        {% if states(target_light_entity) == 'off' %}
+                          {% if speed > 0 %} 5 {% else %} 0 {% endif %}
+                        {% else %}
+                          {% set current_pct = state_attr(target_light_entity, 'brightness') | float(0) / 2.55 %}
+                          {% set step = (speed / 3.33) * (b_scale | float) %}
+                          {{ min(100, max(1, (current_pct + step) | int)) }}
+                        {% endif %}
+                    target:
+                      entity_id: "{{ target_light_entity }}"
+
+              # Case B: Knob rotated while held down (Pressed state) -> Adjust Color Temperature
+              - conditions:
+                  - condition: template
+                    value_template: "{{ trigger.to_state.attributes.action_rotation_button_state == 'pressed' }}"
+                sequence:
+                  - service: light.turn_on
+                    data:
+                      kelvin: >-
+                        {% set speed = trigger.to_state.attributes.action_rotation_percent_speed | float(0) %}
+                        {% set current_k = state_attr(target_light_entity, 'color_temp_kelvin') | float(4000) %}
+                        {% set min_k = state_attr(target_light_entity, 'min_color_temp_kelvin') | float(2700) %}
+                        {% set max_k = state_attr(target_light_entity, 'max_color_temp_kelvin') | float(6500) %}
+                        {% set step = (speed / 3.33) * (ct_scale | float) %}
+                        {{ min(max_k, max(min_k, (current_k + step) | int)) }}
+                    target:
+                      entity_id: "{{ target_light_entity }}"
+
+mode: queued
+max: 10
