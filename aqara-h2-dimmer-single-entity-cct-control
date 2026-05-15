@@ -2,7 +2,11 @@ blueprint:
   name: Aqara H2 Dimmer Switch (KD-R01D) - MQTT Native CCT Control
   description: >
     Control an external CCT light using the raw MQTT payloads from an Aqara H2 Dimmer (KD-R01D) via Zigbee2MQTT.
-    Ensures instantaneous response and bypasses disabled HA entities.
+    Bypasses missing/disabled HA entities and corrects the H2 velocity polarity shift.
+    
+    Configuration Note: 
+    Ensure the H2's 'operation_mode' is set to 'decoupled' in the Z2M frontend 
+    so it does not physically toggle its own internal load relay.
   domain: automation
   input:
     mqtt_topic:
@@ -20,7 +24,7 @@ blueprint:
           multiple: false
     brightness_step_scale:
       name: Brightness Sensitivity
-      description: Multiplier for brightness changes. Higher values change brightness faster.
+      description: Multiplier for brightness adjustments. Higher values change brightness faster.
       default: 1.5
       selector:
         number:
@@ -81,7 +85,7 @@ action:
             target:
               entity_id: "{{ target_light_entity }}"
 
-      # 3. Active Rotation
+      # 3. Active Rotation Handling
       - conditions:
           - condition: template
             value_template: "{{ trigger.payload_json.action == 'rotation' }}"
