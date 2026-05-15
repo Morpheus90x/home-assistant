@@ -1,21 +1,15 @@
 blueprint:
-  name: Aqara H2 Dimmer Switch (KD-R01D) - Single-Entity CCT Control
+  name: Aqara H2 Dimmer Switch (KD-R01D) - MQTT Native CCT Control
   description: >
-    Optimized blueprint for the Aqara H2 EU Dimmer (KD-R01D) running via Zigbee2MQTT.
-    
-    Requirements:
-    1. Set the H2's 'operation_mode' to 'decoupled' in Z2M so it doesn't fire the local relay.
-    2. Select the main 'Action' sensor of the device.
+    Control an external CCT light using the raw MQTT payloads from an Aqara H2 Dimmer (KD-R01D) via Zigbee2MQTT.
+    Ensures instantaneous response and bypasses disabled HA entities.
   domain: automation
   input:
-    action_entity:
-      name: Aqara H2 Action Sensor
-      description: The main action sensor entity (e.g., sensor.kitchen_dimmer_action).
+    mqtt_topic:
+      name: MQTT Topic
+      description: The absolute MQTT topic your H2 publishes to (e.g., z2m/Küche Lichtschalter Aqara Dimmer).
       selector:
-        entity:
-          filter:
-            - domain: sensor
-          multiple: false
+        text:
     target_light:
       name: Target Light
       description: The CCT Light entity you want to control.
@@ -58,19 +52,19 @@ variables:
   ct_scale: !input colortemp_step_scale
 
 trigger:
-  - platform: state
-    entity_id: !input action_entity
+  - platform: mqtt
+    topic: !input mqtt_topic
 
 condition:
   - condition: template
-    value_template: "{{ trigger.to_state.state | string != '' }}"
+    value_template: "{{ trigger.payload_json.action is defined and trigger.payload_json.action != null }}"
 
 action:
   - choose:
       # 1. Single Click -> Toggle Light
       - conditions:
           - condition: template
-            value_template: "{{ trigger.to_state.state == 'single' }}"
+            value_template: "{{ trigger.payload_json.action == 'single' }}"
         sequence:
           - service: light.toggle
             target:
@@ -79,7 +73,7 @@ action:
       # 2. Double Click -> Reset to Default Kelvin
       - conditions:
           - condition: template
-            value_template: "{{ trigger.to_state.state == 'double' }}"
+            value_template: "{{ trigger.payload_json.action == 'double' }}"
         sequence:
           - service: light.turn_on
             data:
@@ -90,18 +84,18 @@ action:
       # 3. Active Rotation
       - conditions:
           - condition: template
-            value_template: "{{ trigger.to_state.state == 'rotation' }}"
+            value_template: "{{ trigger.payload_json.action == 'rotation' }}"
         sequence:
           - choose:
               # Case A: Knob rotated normally (Released state) -> Adjust Brightness
               - conditions:
                   - condition: template
-                    value_template: "{{ trigger.to_state.attributes.action_rotation_button_state == 'released' }}"
+                    value_template: "{{ trigger.payload_json.action_rotation_button_state == 'released' }}"
                 sequence:
                   - service: light.turn_on
                     data:
                       brightness_pct: >-
-                        {% set speed = trigger.to_state.attributes.action_rotation_percent_speed | float(0) %}
+                        {% set speed = trigger.payload_json.action_rotation_percent_speed | float(0) %}
                         {% if states(target_light_entity) == 'off' %}
                           {% if speed > 0 %} 5 {% else %} 0 {% endif %}
                         {% else %}
@@ -115,12 +109,12 @@ action:
               # Case B: Knob rotated while held down (Pressed state) -> Adjust Color Temperature
               - conditions:
                   - condition: template
-                    value_template: "{{ trigger.to_state.attributes.action_rotation_button_state == 'pressed' }}"
+                    value_template: "{{ trigger.payload_json.action_rotation_button_state == 'pressed' }}"
                 sequence:
                   - service: light.turn_on
                     data:
                       kelvin: >-
-                        {% set speed = trigger.to_state.attributes.action_rotation_percent_speed | float(0) %}
+                        {% set speed = trigger.payload_json.action_rotation_percent_speed | float(0) %}
                         {% set current_k = state_attr(target_light_entity, 'color_temp_kelvin') | float(4000) %}
                         {% set min_k = state_attr(target_light_entity, 'min_color_temp_kelvin') | float(2700) %}
                         {% set max_k = state_attr(target_light_entity, 'max_color_temp_kelvin') | float(6500) %}
